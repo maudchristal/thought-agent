@@ -1,43 +1,27 @@
 # Thought Agent — AI image generation (brain-style)
 
-Type what you're thinking; the app generates an image with **Replicate's Google Imagen 4**. Images appear in random spots, fade when you're not hovering, and hovering one image slowly spawns related "thought" images around it.
+Type what you're thinking; the app generates images via the **ITP/IMA Replicate proxy** using **Flux Schnell**. No Replicate account needed. Images appear in random spots, fade when you're not hovering, and hovering one image spawns related "thought" images.
 
-**Files:** `index.html` (frontend) + `server.js` (calls Replicate; API token stays on server).
-
----
-
-## 1. Set up Replicate
-
-1. Go to **[replicate.com](https://replicate.com)** and sign up
-2. **Add a payment method** at [replicate.com/account/billing](https://replicate.com/account/billing)
-3. Get your API token at **[replicate.com/account/api-tokens](https://replicate.com/account/api-tokens)**
-4. **NEVER put your token in code or commit it to GitHub** — use environment variables only
+**Runs on GitHub Pages** — the frontend calls the proxy directly from the browser.
 
 ---
 
-## 2. Run locally
+## 1. View on GitHub Pages
 
-```bash
-cd thought-agent
-export REPLICATE_API_TOKEN="your_token_here"
-node server.js
-```
+1. Repo → **Settings** → **Pages** → **Deploy from a branch** → **main**, **/ (root)** → Save.
+2. Open **https://YOUR_USERNAME.github.io/thought-agent/**
 
-Then open **http://localhost:3000**
-
-- **Windows:** `set REPLICATE_API_TOKEN=your_token_here` then `node server.js`
+No setup. The app uses the ITP/IMA proxy (`itp-ima-replicate-proxy.web.app`); no API token in the repo.
 
 ---
 
-## 3. Deploy to Vercel (for public link)
+## 2. Optional: higher quotas (NYU auth)
 
-1. Go to [vercel.com](https://vercel.com) and connect your GitHub repo
-2. Add **Environment Variable:** `REPLICATE_API_TOKEN` = your token (Vercel keeps it secret)
-3. Deploy — you get a public URL like `thought-agent.vercel.app`
+In `index.html`, set `AUTH_TOKEN` to the token from the proxy docs (authenticate with .nyu.edu, copy token). Refresh the token when it expires (e.g. hourly). Leave empty for default limits.
 
 ---
 
-## 4. Usage
+## 3. Usage
 
 - Type in the box and press Enter or click **Generate**
 - Images stay visible 10 seconds, then fade (unless you hover)

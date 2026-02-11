@@ -24,6 +24,9 @@
     <button id="btn">Generate</button>
   </div>
   <script>
+    const REPLICATE_PROXY = 'https://itp-ima-replicate-proxy.web.app/api/create_n_get';
+    const AUTH_TOKEN = '';
+
     const canvas = document.getElementById('canvas');
     const ctx = canvas.getContext('2d');
     const input = document.getElementById('input');
@@ -36,7 +39,10 @@
     const FADE_IN = 0.03;
     const STAY_VISIBLE_MS = 10000; // Stay visible for 10 seconds before fading
     const RELATED_VARIATIONS = [', dreamy variation', ', abstract thought', ', memory fragment', ', fleeting idea', ', related moment'];
+    const STAY_AFTER_DRAG_MS = 30000;
     let mouse = { x: -1e4, y: -1e4 };
+    let draggingThought = null;
+    let dragOffset = { x: 0, y: 0 };
 
     function resize() {
       W = canvas.width = window.innerWidth;
@@ -63,15 +69,35 @@
       return x >= thought.x && x <= thought.x + w && y >= thought.y && y <= thought.y + h;
     }
 
-    async function generateImage(prompt) {
-      const res = await fetch('/api/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt })
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed');
-      return data.url;
+    function placeholderImageUrl(prompt) {
+      const seed = encodeURIComponent(String(prompt).slice(0, 50) || 'thought');
+      return `https://picsum.photos/seed/${seed}/400`;
+    }
+
+    async function generateImage(prompt, imageUrl) {
+      try {
+        const data = {
+          model: 'black-forest-labs/flux-schnell',
+          input: { prompt: String(prompt).trim() }
+        };
+        const fetchOptions = {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${AUTH_TOKEN}`
+          },
+          body: JSON.stringify(data)
+        };
+        const response = await fetch(REPLICATE_PROXY, fetchOptions);
+        const prediction = await response.json();
+        if (prediction.error) throw new Error(prediction.error);
+        const output = prediction.output;
+        const url = Array.isArray(output) ? output[0] : output;
+        if (url) return url;
+      } catch (e) {
+        console.warn('Proxy request failed:', e);
+      }
+      return placeholderImageUrl(prompt);
     }
 
     function loadImage(url) {
@@ -91,9 +117,10 @@
         lastRelatedAt: 0,
         createdAt: Date.now(),
         isRelated: isRelated,
-        basePrompt: basePrompt || prompt, // The original prompt (e.g. "pizza")
+        basePrompt: basePrompt || prompt,
         relatedPending: false,
-        spawnedCount: 0 // How many children this thought has spawned
+        spawnedCount: 0,
+        stayVisibleUntil: null
       };
       loadImage(url).then(img => {
         thought.img = img;
@@ -105,13 +132,12 @@
     }
 
     async function spawnRelatedThought(parent) {
-      if (parent.relatedPending || parent.spawnedCount >= 3) return; // Max 3 children per image
+      if (parent.relatedPending) return;
       parent.relatedPending = true;
       const variation = RELATED_VARIATIONS[(parent.spawnedCount) % RELATED_VARIATIONS.length];
-      // Use the base prompt so we keep getting variations of the original idea
       const prompt = (parent.basePrompt + variation).slice(0, 500);
       try {
-        const url = await generateImage(prompt);
+        const url = await generateImage(prompt, parent.url);
         const offset = 100 + Math.random() * 60;
         const angle = Math.random() * Math.PI * 2;
         const newX = Math.max(20, Math.min(W - IMG_SIZE - 20, parent.x + Math.cos(angle) * offset));
@@ -122,12 +148,57 @@
       finally { parent.relatedPending = false; }
     }
 
-    canvas.addEventListener('mousemove', e => {
+    function getMouse(e) {
       const rect = canvas.getBoundingClientRect();
       const scaleX = canvas.width / rect.width;
       const scaleY = canvas.height / rect.height;
       mouse.x = (e.clientX - rect.left) * scaleX;
       mouse.y = (e.clientY - rect.top) * scaleY;
+    }
+
+    function thoughtAt(x, y) {
+      for (let i = thoughts.length - 1; i >= 0; i--) {
+        if (hitTest(x, y, thoughts[i])) return thoughts[i];
+      }
+      return null;
+    }
+
+    canvas.addEventListener('mousemove', e => {
+      getMouse(e);
+      if (draggingThought) {
+        const w = draggingThought.w || IMG_SIZE;
+        const h = draggingThought.h || IMG_SIZE;
+        draggingThought.x = Math.max(0, Math.min(W - w, mouse.x - dragOffset.x));
+        draggingThought.y = Math.max(0, Math.min(H - h - 60, mouse.y - dragOffset.y));
+      }
+    });
+
+    canvas.addEventListener('mousedown', e => {
+      getMouse(e);
+      if (draggingThought) return;
+      const t = thoughtAt(mouse.x, mouse.y);
+      if (t) {
+        draggingThought = t;
+        dragOffset.x = mouse.x - t.x;
+        dragOffset.y = mouse.y - t.y;
+        canvas.style.cursor = 'grabbing';
+      }
+    });
+
+    canvas.addEventListener('mouseup', () => {
+      if (draggingThought) {
+        draggingThought.stayVisibleUntil = Date.now() + STAY_AFTER_DRAG_MS;
+        draggingThought = null;
+        canvas.style.cursor = 'default';
+      }
+    });
+
+    canvas.addEventListener('mouseleave', () => {
+      if (draggingThought) {
+        draggingThought.stayVisibleUntil = Date.now() + STAY_AFTER_DRAG_MS;
+        draggingThought = null;
+        canvas.style.cursor = 'default';
+      }
     });
 
     input.addEventListener('keydown', e => { if (e.key === 'Enter') btn.click(); });
@@ -142,7 +213,7 @@
         const { x, y } = randomPosition();
         addThought(url, prompt, x, y);
       } catch (err) {
-        alert(err.message || 'Generation failed. Is REPLICATE_API_TOKEN set?');
+        alert(err.message || 'Generation failed. Check console.');
       }
       btn.disabled = false;
     });
@@ -164,22 +235,24 @@
     }
 
     function updateThought(thought, dt) {
+      if (thought === draggingThought) {
+        thought.opacity = 1;
+        return;
+      }
       thought.hovered = hitTest(mouse.x, mouse.y, thought);
       const age = Date.now() - thought.createdAt;
-      const canFade = age > STAY_VISIBLE_MS; // Only fade after 10 seconds
+      const stayUntil = thought.stayVisibleUntil || (thought.createdAt + STAY_VISIBLE_MS);
+      const canFade = Date.now() > stayUntil;
 
       if (thought.hovered) {
         thought.opacity = Math.min(1, thought.opacity + FADE_IN);
-        // ANY hovered image can spawn more images (up to 3 each)
         if (Date.now() - thought.lastRelatedAt > 3500) {
           thought.lastRelatedAt = Date.now();
           spawnRelatedThought(thought);
         }
       } else if (canFade) {
-        // Only start fading after 10 seconds have passed
         thought.opacity = Math.max(0, thought.opacity - FADE_OUT);
       }
-      // If not hovered and age < 10s, do nothing (stay at full opacity)
     }
 
     function loop(t) {
@@ -196,6 +269,7 @@
         }
         drawThought(thought, thought.isRelated);
       }
+      canvas.style.cursor = draggingThought ? 'grabbing' : (thoughtAt(mouse.x, mouse.y) ? 'grab' : 'default');
 
       requestAnimationFrame(loop);
     }
