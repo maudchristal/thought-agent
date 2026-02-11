@@ -1,0 +1,11 @@
+{
+  "name": "thought-agent",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5"
+  }
+}

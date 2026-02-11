@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, height=device-height, initial-scale=1">
+  <title>Thought Agent</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; background: #0a0a12; font-family: system-ui, sans-serif; overflow: hidden; }
+    #canvas { display: block; width: 100vw; height: 100vh; cursor: default; }
+    #bar { position: fixed; bottom: 0; left: 0; right: 0; padding: 12px 16px; background: rgba(10,10,20,0.92); border-top: 1px solid rgba(255,255,255,0.08); display: flex; gap: 8px; align-items: center; }
+    #input { flex: 1; padding: 10px 14px; border: 1px solid rgba(255,255,255,0.15); border-radius: 8px; background: rgba(255,255,255,0.06); color: #eee; font-size: 15px; outline: none; }
+    #input::placeholder { color: rgba(255,255,255,0.4); }
+    #input:focus { border-color: rgba(180,160,255,0.5); }
+    #btn { padding: 10px 20px; border: none; border-radius: 8px; background: linear-gradient(135deg, #5a4a8a, #3d2f6b); color: #fff; font-size: 14px; cursor: pointer; }
+    #btn:hover { background: linear-gradient(135deg, #6a5a9a, #4d3f7b); }
+    #btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+  <div id="bar">
+    <input id="input" type="text" placeholder="What are you thinking about?" autocomplete="off" />
+    <button id="btn">Generate</button>
+  </div>
+  <script>
+    // Professor's proxy URL (no token needed). Leave empty to use your own server or placeholders.
+    const PROXY_URL = ''; // e.g. 'https://course.edu/api/replicate' — paste the URL your professor gives you
+
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const input = document.getElementById('input');
+    const btn = document.getElementById('btn');
+
+    let W = 0, H = 0;
+    const thoughts = [];
+    const IMG_SIZE = 200;
+    const FADE_OUT = 0.008;
+    const FADE_IN = 0.03;
+    const STAY_VISIBLE_MS = 10000; // Stay visible for 10 seconds before fading
+    const RELATED_VARIATIONS = [', dreamy variation', ', abstract thought', ', memory fragment', ', fleeting idea', ', related moment'];
+    let mouse = { x: -1e4, y: -1e4 };
+
+    function resize() {
+      W = canvas.width = window.innerWidth;
+      H = canvas.height = window.innerHeight;
+    }
+    window.addEventListener('resize', resize);
+    resize();
+
+    function randInRange(min, max) {
+      return min + Math.random() * (max - min);
+    }
+
+    function randomPosition() {
+      const pad = IMG_SIZE + 40;
+      return {
+        x: Math.max(20, randInRange(0, W - pad)),
+        y: Math.max(20, randInRange(0, H - pad - 80))
+      };
+    }
+
+    function hitTest(x, y, thought) {
+      const w = thought.w || IMG_SIZE;
+      const h = thought.h || IMG_SIZE;
+      return x >= thought.x && x <= thought.x + w && y >= thought.y && y <= thought.y + h;
+    }
+
+    // Demo mode: when no backend (e.g. GitHub Pages), use placeholder images. No API key needed.
+    function placeholderImageUrl(prompt) {
+      const seed = encodeURIComponent(String(prompt).slice(0, 50) || 'thought');
+      return `https://picsum.photos/seed/${seed}/400`;
+    }
+
+    async function generateImage(prompt, imageUrl) {
+      const body = { prompt };
+      if (imageUrl) body.image = imageUrl;
+      const tryUrl = PROXY_URL || '/api/generate';
+      try {
+        const res = await fetch(tryUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+        const data = await res.json();
+        if (res.ok) return data.url;
+      } catch (_) {}
+      // No proxy/backend (e.g. GitHub Pages) — use placeholder images
+      return placeholderImageUrl(prompt);
+    }
+
+    function loadImage(url) {
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = () => resolve(img);
+        img.onerror = reject;
+        img.src = url;
+      });
+    }
+
+    function addThought(url, prompt, x, y, isRelated = false, basePrompt = null) {
+      const thought = {
+        url, prompt, x, y, w: IMG_SIZE, h: IMG_SIZE, opacity: isRelated ? 0 : 1,
+        img: null, hovered: false, id: Math.random().toString(36).slice(2),
+        lastRelatedAt: 0,
+        createdAt: Date.now(),
+        isRelated: isRelated,
+        basePrompt: basePrompt || prompt, // The original prompt (e.g. "pizza")
+        relatedPending: false,
+        spawnedCount: 0 // How many children this thought has spawned
+      };
+      loadImage(url).then(img => {
+        thought.img = img;
+        const r = Math.min(img.width, img.height, IMG_SIZE);
+        thought.w = thought.h = r;
+      }).catch(() => { thought.opacity = 0; });
+      thoughts.push(thought); // ALL thoughts go in the main array now
+      return thought;
+    }
+
+    async function spawnRelatedThought(parent) {
+      if (parent.relatedPending || parent.spawnedCount >= 3) return; // Max 3 children per image
+      parent.relatedPending = true;
+      const variation = RELATED_VARIATIONS[(parent.spawnedCount) % RELATED_VARIATIONS.length];
+      // Use the base prompt so we keep getting variations of the original idea
+      const prompt = (parent.basePrompt + variation).slice(0, 500);
+      try {
+        const url = await generateImage(prompt, parent.url);
+        const offset = 100 + Math.random() * 60;
+        const angle = Math.random() * Math.PI * 2;
+        const newX = Math.max(20, Math.min(W - IMG_SIZE - 20, parent.x + Math.cos(angle) * offset));
+        const newY = Math.max(20, Math.min(H - IMG_SIZE - 100, parent.y + Math.sin(angle) * offset));
+        addThought(url, prompt, newX, newY, true, parent.basePrompt);
+        parent.spawnedCount++;
+      } catch (_) {}
+      finally { parent.relatedPending = false; }
+    }
+
+    canvas.addEventListener('mousemove', e => {
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = canvas.width / rect.width;
+      const scaleY = canvas.height / rect.height;
+      mouse.x = (e.clientX - rect.left) * scaleX;
+      mouse.y = (e.clientY - rect.top) * scaleY;
+    });
+
+    input.addEventListener('keydown', e => { if (e.key === 'Enter') btn.click(); });
+
+    btn.addEventListener('click', async () => {
+      const prompt = input.value.trim();
+      if (!prompt) return;
+      btn.disabled = true;
+      input.value = '';
+      try {
+        const url = await generateImage(prompt);
+        const { x, y } = randomPosition();
+        addThought(url, prompt, x, y);
+      } catch (err) {
+        alert(err.message || 'Generation failed. Is REPLICATE_API_TOKEN set?');
+      }
+      btn.disabled = false;
+    });
+
+    function drawThought(thought, isRelated = false) {
+      if (!thought.img || thought.opacity <= 0) return;
+      ctx.save();
+      ctx.globalAlpha = thought.opacity;
+      const w = thought.w || IMG_SIZE;
+      const h = thought.h || IMG_SIZE;
+      const size = Math.min(w, h, IMG_SIZE);
+      ctx.drawImage(thought.img, thought.x, thought.y, size, size);
+      if (!isRelated) {
+        ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(thought.x, thought.y, size, size);
+      }
+      ctx.restore();
+    }
+
+    function updateThought(thought, dt) {
+      thought.hovered = hitTest(mouse.x, mouse.y, thought);
+      const age = Date.now() - thought.createdAt;
+      const canFade = age > STAY_VISIBLE_MS; // Only fade after 10 seconds
+
+      if (thought.hovered) {
+        thought.opacity = Math.min(1, thought.opacity + FADE_IN);
+        // ANY hovered image can spawn more images (up to 3 each)
+        if (Date.now() - thought.lastRelatedAt > 3500) {
+          thought.lastRelatedAt = Date.now();
+          spawnRelatedThought(thought);
+        }
+      } else if (canFade) {
+        // Only start fading after 10 seconds have passed
+        thought.opacity = Math.max(0, thought.opacity - FADE_OUT);
+      }
+      // If not hovered and age < 10s, do nothing (stay at full opacity)
+    }
+
+    function loop(t) {
+      const dt = 16;
+      ctx.fillStyle = '#0a0a12';
+      ctx.fillRect(0, 0, W, H);
+
+      for (let i = thoughts.length - 1; i >= 0; i--) {
+        const thought = thoughts[i];
+        updateThought(thought, dt);
+        if (thought.opacity <= 0) {
+          thoughts.splice(i, 1);
+          continue;
+        }
+        drawThought(thought, thought.isRelated);
+      }
+
+      requestAnimationFrame(loop);
+    }
+    requestAnimationFrame(loop);
+  </script>
+</body>
+</html>

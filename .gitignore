@@ -1,0 +1,14 @@
+.DS_Store
+
+# Environment / secrets — never commit real tokens
+.env
+.env.local
+.env.*.local
+.env.development
+.env.production
+.env.test
+*.env
+!.env.example
+
+# Dependencies
+node_modules
